@@ -102,7 +102,7 @@
 
   * 理想的非阻塞异步I/O
 
-    > 尽管epoll已经利用了事件来降低CPU的耗用，但是休眠期间CPU几乎是闲置的，对于当前线程而言利用率不够。
+    > 尽管epoll已经利用了事件来降低CPU的耗用，但是休眠期间CPU几乎是闲置的，I对于当前线程而言利用率不够。
 
     __完美的异步I/O技术是无序通过遍历或者事件唤醒等方式轮询，可以直接处理下一个任务，只需在I/O完成后通过信号或回调将数据传递给应用程序即可__
 
@@ -183,7 +183,21 @@
       * 请求对象是异步I/O过程中的重要中间产物，所有的状态都保存在这个对象中，包括送入线程池等待执行以及I/O操作完毕后的回调处理。
 
   * 执行回调
+
+    * 组装好请求对象，送入I/O线程池等待执行，实际上完成了异步I/O的第一步，回调通知为第二步。
+    * 线程池中的I/O操作调用完毕之后，会将获取的结果储存在req->result属性上，然后调用PostQueuedCompletionStatus()通知IOCP
+    * PostQueuedCompletionStatus()方法的作用是向IOCP提交执行状态，通过GetQueuedCompletionStatus()提取，并将线程归还线程池。
+    * 过程中，还动用了事件循环的I/O观察者。在每次Tick的执行中，它会调用IOCP相关的GetQueuedCompletionStatus()方法检查线程池中是否有执行完的请求，如果存在，会将请求对象加入到I/O观察者的队列中，然后将其当作事件处理。
+
+    __整个异步I/O流程图__
+
+      ![Alt text](https://raw.githubusercontent.com/zqjflash/nodejs-IO/master/global_io_process.png)
+
+    * 事件循环、观察者、请求对象、I/O线程池这四者共同构成了Node异步I/O模型的基本要素。 
+
   * 小结
+
+    * JS是单线程的，很容易理解为它不能充分利用多核CPU。事实上，在Node中，Node自身其实是多线程的，只是I/O线程使用的CPU较少。另一个需要重视观点，除用户代码无法并行执行外，所有的I/O（磁盘I/O和网络I/O等）则是可以并行起来。
 
 ## 非I/O的异步API
 
