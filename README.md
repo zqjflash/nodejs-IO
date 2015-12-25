@@ -201,12 +201,109 @@
 
 ## 非I/O的异步API
 
+  > Node存在一些与I/O无关的异步API，分别是setTimeout()、setInterval()、setImmediate()和process.nextTick()。
+
   * 定时器
+
+    * setTimeout()和setInterval()与浏览器中的API是一致的，分别用于单次和多次定时执行任务。与异步I/O比较类似，只是不需要I/O线程池的参与。调用setTimeout()或setInterval()创建的定时器会被插入到定时器观察者内部的一个红黑树中。每次Tick执行时，会从该红黑树中迭代取出定时器对象，检查是否超过定时时间，如果超过，就形成一个事件，它的回调函数将立即执行。
+
+    __定时器的问题在于，它并非精确的（在容忍范围内）。如果某次循环占用时间较多，下次循环时，就已经超时很久了。__
+
+    * setTimeout()执行流程图如下：
+
+      ![Alt text](https://raw.githubusercontent.com/zqjflash/nodejs-IO/master/settimeout_behavior.png)
+
   * process.nextTick()
+
+    * 相比seTimeout操作相对较为轻量，具体代码如下：
+
+    ```js
+    process.nextTick = function(callback) {
+        if (process._exiting) {
+            return;
+        }
+        if (tickDepth >= process.maxTickDepth) {
+            maxTickWarn();
+        }
+        var tock = { callback: callback };
+        if (process.domain) {
+            tock.domain = process.domain;
+        }
+        nextTickQueue.push(tock);
+        if (nextTickQueue.length) {
+            process._needTickCallback();
+        }
+    }
+    ```
+
+    __每次调用process.nextTick()方法，只会将回调函数放入队列中，在下一轮Tick时取出执行。定时器中采用红黑树的操作时间复杂度为O(lg(n))，nextTick()的时间复杂度为O(1)。相较之下，process.nextTick()更高效__
+
   * setImmediate()
+
+    __setImmediate()方法与process.nextTick()方法十分类似，都是将回调函数延迟执行。不过之间有细微差别。__
+
+    ```js
+    process.nextTick(function() {
+        console.log('nextTick延迟执行');
+    });
+    setImmediate(function() {
+        console.log('setImmediate延迟执行');
+    });
+    console.log('正常执行');
+    ```
+
+    __执行结果__
+
+    ```
+    正常执行
+
+    nextTick延迟执行
+
+    setImmediate延迟执行
+    ```
+
+    __process.nextTick()属于idle观察者，setImmediate()属于check观察者，在每一个轮询检查中，idle观察者先于I/O观察者，I/O观察者先于check观察者。__
+
+    __process.nextTick()回调函数保存在一个数组中，setImmediate()的结果则是保存在链表中。在行为上，process.nextTick()在每轮循环中会将数组中的回调函数全部执行完。而setImmediate()在每轮循环中执行链表中的一个回调函数。__
+
+    __当第一个setImmediate()的回调函数执行后，并没有立即执行第二个，主要是为了保证每轮循环能够较快地执行结束，防止CPU占用过多而阻塞后续I/O调用的情况。__
 
 ## 事件驱动与高性能服务器
 
+  > 尽管本章只用了fs.open()方法作为例子来阐述Node如何实现异步I/O，而实质上，异步I/O不仅仅应用在文件操作中。对于网络套接字的处理，Node也应用到了异步I/O，网络套接字上侦听到的请求都会形成事件交给I/O观察者。事件循环会不停地处理这些网络I/O事件。
+
+  * Node构建Web服务器，其流程图所示：
+
+    ![Alt text](https://raw.githubusercontent.com/zqjflash/nodejs-IO/master/node_web_server.png)
+
+  * 列举几种经典的服务器模型
+
+    * 同步式：一次只能处理一个请求，其余请求处于等待状态；
+    * 每进程/每请求：每个请求启动一个进程，虽可以处理多个请求，但不具备扩展性，系统资源有限；
+    * 每线程/每请求：每个请求启动一个线程，但是线程占用内存，当大并发请求时，内存会很快用光，导致服务器缓慢。
+
+    __相比之下，每线程/每请求扩展性比每进程/每请求的方式要好一些__
+
+  __Apache采用的是每线程/每请求的方式，Node和Nginx则通过事件驱动的方式处理请求，无须为每个请求创建额外的对应线程，省掉创建和销毁线程的开销，同时操作系统在调度任务时，线程少上下文切换代价比较低。Nginx采用纯C写成，常用在反向代理或负载均衡__
+
+  > 附一些其他知名的基于事件驱动的实现
+
+  * Ruby的Event Machine
+  * Perl的AnyEvent
+  * Python的Twisted
+
 ## 总结
 
+  __事件循环是异步实现的核心，与浏览器中的执行模型基本一致，Node自身实现一套完善的高性能异步I/O框架，打破了js在服务端止步不前的局面。__
+
 ## 参考资源
+
+  * http://cnodejs.org/blog/?p=244
+  * http://cnodejs.org/blog/?p=2426
+  * http://cnodejs.org/blog/?p=2489
+  * http://nodejs.org/nodeconf.pdf
+  * http://blog.dccmx.com/2011/04/select-poll-epoll-in-kernel/
+  * http://www.ibm.com/developerworks/cn/linux/l-async/
+  * http://twistedmatrix.com/trac/
+  * http://luvit.io/
+  * http://forum.nginx.org/read.php?2,113524,113587#msg-113587
